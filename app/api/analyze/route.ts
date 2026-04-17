@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { generateText } from "ai"
+import Anthropic from "@anthropic-ai/sdk"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -35,64 +35,66 @@ export async function POST(request: NextRequest) {
     const pdfData = await pdfParse(buffer)
     const contractText = pdfData.text
 
-    if (!contractText || contractText.trim().length < 100) {
+    if (!contractText || contractText.trim().length < 50) {
       return NextResponse.json(
         { error: "Der Vertrag konnte nicht gelesen werden oder ist zu kurz" },
         { status: 400 }
       )
     }
 
-    // Analyze the contract using AI
-    const systemPrompt = `Du bist ein Experte für österreichisches Mietrecht, insbesondere das Mietrechtsgesetz (MRG) und das ABGB.
-Analysiere den folgenden Mietvertrag und identifiziere potenzielle rechtliche Probleme.
+    // Initialize Anthropic client
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-Antworte IMMER im folgenden JSON-Format:
+    // Analyze the contract using Claude
+    const message = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1500,
+      system: `Du bist ein Experte fuer oesterreichisches Mietrecht (MRG).
+Analysiere den Mietvertrag. Antworte auf Deutsch.
+Antworte NUR als JSON mit exakt diesen Keys:
 {
-  "summary": "Eine kurze Zusammenfassung der wichtigsten Erkenntnisse (2-3 Sätze)",
-  "overallRisk": "high" | "medium" | "low",
+  "summary": "Kurze Zusammenfassung der wichtigsten Erkenntnisse (2-3 Saetze)",
+  "overallRisk": "high" oder "medium" oder "low",
+  "mietzins": "Deine Analyse zum Mietzins hier",
+  "kaution": "Deine Analyse zur Kaution hier",
+  "kuendigungsfristen": "Deine Analyse zu Kuendigungsfristen hier",
   "issues": [
     {
-      "clause": "Name/Titel der problematischen Klausel",
+      "clause": "Name der problematischen Klausel",
       "issue": "Beschreibung des Problems",
-      "severity": "high" | "medium" | "low",
+      "severity": "high" oder "medium" oder "low",
       "legalReference": "Relevante Gesetzesreferenz (z.B. § 27 MRG)",
-      "recommendation": "Empfehlung für den Mieter"
+      "recommendation": "Empfehlung fuer den Mieter"
     }
   ],
-  "validClauses": ["Liste gültiger/unbedenklicher Klauseln"]
+  "validClauses": ["Liste gueltiger/unbedenklicher Klauseln"]
 }
-
-Achte besonders auf:
-- Unzulässige Befristungen (§ 29 MRG)
-- Unzulässige Kündigungsverzichte
-- Überhöhte Kautionen (mehr als 6 Monatsmieten)
-- Unzulässige Betriebskostenklauseln
-- Verstöße gegen das Mietrechtsgesetz
-- Unklare oder benachteiligende Renovierungsklauseln
-- Problematische Indexierungsklauseln
-- Unzulässige Vertragsstrafen
-- Überhöhte Mietzinse im Altbau (Richtwertmietzins)
-
-Gib nur valides JSON zurück, keine zusätzlichen Erklärungen.`
-
-    const { text } = await generateText({
-      model: "openai/gpt-4o-mini",
-      system: systemPrompt,
-      prompt: `Analysiere diesen österreichischen Mietvertrag:\n\n${contractText.substring(0, 15000)}`,
+Kein Text ausserhalb des JSON. Nur Bezug auf den vorliegenden Vertrag.`,
+      messages: [
+        {
+          role: "user",
+          content: `Mietvertrag zur Analyse:\n\n${contractText.slice(0, 12000)}`
+        }
+      ]
     })
 
-    // Parse the AI response
+    // Parse the response
+    const contentBlock = message.content[0]
+    if (contentBlock.type !== "text") {
+      return NextResponse.json(
+        { error: "Unerwartete Antwort vom AI-Service" },
+        { status: 500 }
+      )
+    }
+    
+    const raw = contentBlock.text
+    const clean = raw.replace(/```json|```/g, "").trim()
+    
     let analysisResult
     try {
-      // Extract JSON from the response (in case there's extra text)
-      const jsonMatch = text.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        analysisResult = JSON.parse(jsonMatch[0])
-      } else {
-        throw new Error("Keine JSON-Antwort gefunden")
-      }
+      analysisResult = JSON.parse(clean)
     } catch {
-      console.error("Failed to parse AI response:", text)
+      console.error("Failed to parse AI response:", raw)
       return NextResponse.json(
         { error: "Die Analyse konnte nicht verarbeitet werden" },
         { status: 500 }
