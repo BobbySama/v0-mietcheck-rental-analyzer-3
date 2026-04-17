@@ -42,12 +42,19 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Initialize Anthropic client
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    // Initialize Anthropic client with OpenRouter
+    const client = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      baseURL: "https://openrouter.ai/api/v1",
+      defaultHeaders: {
+        "HTTP-Referer": "https://mietcheck.vercel.app",
+        "X-Title": "MietCheck",
+      },
+    })
 
     // Analyze the contract using Claude
     const message = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "anthropic/claude-haiku-4-5",
       max_tokens: 1500,
       system: `Du bist ein Experte fuer oesterreichisches Mietrecht (MRG).
 Analysiere den Mietvertrag. Antworte auf Deutsch.
