@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { generateText } from "ai"
 
+export const runtime = "nodejs"
 export const maxDuration = 60
 
 export async function POST(request: NextRequest) {
@@ -75,7 +76,7 @@ Achte besonders auf:
 Gib nur valides JSON zurück, keine zusätzlichen Erklärungen.`
 
     const { text } = await generateText({
-      model: "anthropic/claude-opus-4",
+      model: "openai/gpt-4o-mini",
       system: systemPrompt,
       prompt: `Analysiere diesen österreichischen Mietvertrag:\n\n${contractText.substring(0, 15000)}`,
     })
