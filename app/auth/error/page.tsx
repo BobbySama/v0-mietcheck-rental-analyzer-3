@@ -40,7 +40,7 @@ export default async function AuthErrorPage({
         <CardContent>
           <p className="text-sm text-muted-foreground text-center">
             {params?.error
-              ? `Fehlercode: ${params.error}`
+              ? decodeURIComponent(params.error)
               : "Ein unbekannter Fehler ist aufgetreten. Bitte versuchen Sie es erneut."}
           </p>
         </CardContent>
