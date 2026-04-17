@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
 
     // Analyze the contract using Claude
     const message = await client.messages.create({
-      model: "anthropic/claude-haiku-4-5",
+      model: "anthropic/claude-3.5-haiku",
       max_tokens: 1500,
       system: `Du bist ein Experte fuer oesterreichisches Mietrecht (MRG).
 Analysiere den Mietvertrag. Antworte auf Deutsch.
