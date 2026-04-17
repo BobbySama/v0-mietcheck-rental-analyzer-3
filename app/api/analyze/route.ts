@@ -1,12 +1,30 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import Anthropic from "@anthropic-ai/sdk"
+import OpenAI from "openai"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
 
+async function extractPDFText(buffer: Buffer): Promise<string> {
+  const text = buffer.toString("latin1")
+  const results: string[] = []
+  const regex = /\(([^\)]{1,200})\)\s*Tj/g
+  let match
+  while ((match = regex.exec(text)) !== null) {
+    results.push(match[1])
+  }
+  let extracted = results.join(" ").trim()
+  if (extracted.length < 50) {
+    extracted = buffer
+      .toString("utf8")
+      .replace(/[^\x20-\x7E\xC0-\xFF\n\r\t]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  }
+  return extracted
+}
+
 export async function POST(request: NextRequest) {
-  // Check authentication
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -26,42 +44,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Nur PDF-Dateien erlaubt" }, { status: 400 })
     }
 
-    // Read the PDF file
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
-    
-    // Extract text from PDF
-    const pdfParse = (await import("pdf-parse")).default
-    const pdfData = await pdfParse(buffer)
-    const contractText = pdfData.text
+    const contractText = await extractPDFText(buffer)
 
     if (!contractText || contractText.trim().length < 50) {
       return NextResponse.json(
-        { error: "Der Vertrag konnte nicht gelesen werden oder ist zu kurz" },
+        { error: "Der Vertrag konnte nicht gelesen werden." },
         { status: 400 }
       )
     }
 
-    // Initialize Anthropic client with OpenRouter
-    const client = new Anthropic({
+    const client = new OpenAI({
       apiKey: process.env.ANTHROPIC_API_KEY,
       baseURL: "https://openrouter.ai/api/v1",
-      defaultHeaders: {
-        "HTTP-Referer": "https://mietcheck.vercel.app",
-        "X-Title": "MietCheck",
-      },
     })
 
-    // Analyze the contract using Claude
-    const message = await client.messages.create({
-      model: "anthropic/claude-3.5-haiku",
+    const completion = await client.chat.completions.create({
+      model: "anthropic/claude-3-haiku",
       max_tokens: 1500,
-      system: `Du bist ein Experte fuer oesterreichisches Mietrecht (MRG).
+      messages: [
+        {
+          role: "system",
+          content: `Du bist ein Experte fuer oesterreichisches Mietrecht (MRG).
 Analysiere den Mietvertrag. Antworte auf Deutsch.
 Antworte NUR als JSON mit exakt diesen Keys:
 {
   "summary": "Kurze Zusammenfassung der wichtigsten Erkenntnisse (2-3 Saetze)",
-  "overallRisk": "high" oder "medium" oder "low",
+  "overallRisk": "high oder medium oder low",
   "mietzins": "Deine Analyse zum Mietzins hier",
   "kaution": "Deine Analyse zur Kaution hier",
   "kuendigungsfristen": "Deine Analyse zu Kuendigungsfristen hier",
@@ -69,15 +79,15 @@ Antworte NUR als JSON mit exakt diesen Keys:
     {
       "clause": "Name der problematischen Klausel",
       "issue": "Beschreibung des Problems",
-      "severity": "high" oder "medium" oder "low",
-      "legalReference": "Relevante Gesetzesreferenz (z.B. § 27 MRG)",
+      "severity": "high oder medium oder low",
+      "legalReference": "Relevante Gesetzesreferenz z.B. Paragraph 27 MRG",
       "recommendation": "Empfehlung fuer den Mieter"
     }
   ],
-  "validClauses": ["Liste gueltiger/unbedenklicher Klauseln"]
+  "validClauses": ["Liste gueltiger Klauseln"]
 }
-Kein Text ausserhalb des JSON. Nur Bezug auf den vorliegenden Vertrag.`,
-      messages: [
+Kein Text ausserhalb des JSON.`
+        },
         {
           role: "user",
           content: `Mietvertrag zur Analyse:\n\n${contractText.slice(0, 12000)}`
@@ -85,18 +95,9 @@ Kein Text ausserhalb des JSON. Nur Bezug auf den vorliegenden Vertrag.`,
       ]
     })
 
-    // Parse the response
-    const contentBlock = message.content[0]
-    if (contentBlock.type !== "text") {
-      return NextResponse.json(
-        { error: "Unerwartete Antwort vom AI-Service" },
-        { status: 500 }
-      )
-    }
-    
-    const raw = contentBlock.text
+    const raw = completion.choices[0].message.content || ""
     const clean = raw.replace(/```json|```/g, "").trim()
-    
+
     let analysisResult
     try {
       analysisResult = JSON.parse(clean)
@@ -109,6 +110,7 @@ Kein Text ausserhalb des JSON. Nur Bezug auf den vorliegenden Vertrag.`,
     }
 
     return NextResponse.json(analysisResult)
+
   } catch (error) {
     console.error("Analysis error:", error)
     return NextResponse.json(
