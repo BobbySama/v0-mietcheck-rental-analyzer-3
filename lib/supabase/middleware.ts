@@ -41,19 +41,25 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  const isAuthPage = request.nextUrl.pathname.startsWith('/auth')
-  const isApiRoute = request.nextUrl.pathname.startsWith('/api')
-  const isPublicRoute = isAuthPage
+  const pathname = request.nextUrl.pathname
+  const isAuthCallback = pathname === '/auth/callback'
+  const isAuthPage = pathname.startsWith('/auth')
+  const isApiRoute = pathname.startsWith('/api')
+  
+  // Never interfere with the auth callback - let it complete
+  if (isAuthCallback) {
+    return supabaseResponse
+  }
 
-  // Redirect logged-in users away from auth pages
+  // Redirect logged-in users away from auth pages (login, sign-up, etc.)
   if (isAuthPage && user) {
     const url = request.nextUrl.clone()
     url.pathname = '/'
     return NextResponse.redirect(url)
   }
 
-  // Protect all non-public routes
-  if (!user && !isPublicRoute && !isApiRoute) {
+  // Protect all non-auth, non-api routes
+  if (!user && !isAuthPage && !isApiRoute) {
     const url = request.nextUrl.clone()
     url.pathname = '/auth/login'
     return NextResponse.redirect(url)
